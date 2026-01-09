@@ -1,0 +1,750 @@
+
+import React, { createContext, useReducer, useContext, useEffect } from 'react';
+import { generateMap } from '../engine/MapGenerator';
+import { FACTIONS } from '../data/factions';
+import { FATE_EVENTS } from '../data/fateEvents';
+import { shuffle } from 'lodash';
+
+const GameContext = createContext();
+
+const INITIAL_STATE = {
+    players: [],
+    mapNodes: [],
+    currentPlayerIndex: 0,
+    turn: 1,
+    phase: 'SETUP', // SETUP, IDLE, MOVING, EVENT_HANDLING, END_TURN
+    dice: 0,
+    pendingMove: 0,
+    gameLog: [],
+    modal: null,
+    winner: null,
+    victoryTarget: 10 // Default victory condition
+};
+
+const BASE_MOVE_COST = 0.5;
+
+function getMoveCost(player) {
+    const f = player.stats.faction;
+    return f.passives.moveCost || BASE_MOVE_COST;
+}
+
+function log(state, msg) {
+    return { ...state, gameLog: [`[T${state.turn}] ${msg}`, ...state.gameLog] };
+}
+
+function gameReducer(state, action) {
+    switch (action.type) {
+        case 'INIT_GAME': {
+            const { playerConfigs, victoryTarget = 10 } = action.payload;
+            const map = generateMap();
+            const players = playerConfigs.map((cfg, idx) => {
+                const f = FACTIONS.find(x => x.id === cfg.factionId);
+                return {
+                    id: idx,
+                    name: f.name,
+                    factionId: f.id,
+                    color: f.color,
+                    money: f.initialMoney,
+                    power: f.initialPower,
+                    coupons: [],
+                    position: 0,
+                    isSkipped: false,
+                    skillCooldown: 0,
+                    highPowerCooldown: 0,
+                    turnsSinceFate: 0,
+                    buffs: [],
+                    extraTurn: false,
+                    stats: { faction: f }
+                };
+            });
+            return { ...INITIAL_STATE, players, mapNodes: map, phase: 'IDLE', gameLog: ['游戏开始！'], victoryTarget };
+        }
+
+        case 'ROLL_DICE': {
+            const p = state.players[state.currentPlayerIndex];
+            const moveCost = getMoveCost(p);
+            // Power Check
+            if (p.power < moveCost) {
+                return handleEmergencyCharge(state, p);
+            }
+
+            let roll = Math.floor(Math.random() * 3) + 1;
+
+            // Check buffs
+            let newBuffs = p.buffs || [];
+            if (newBuffs.includes('move_minus_1')) {
+                roll = Math.max(1, roll - 1);
+                newBuffs = newBuffs.filter(b => b !== 'move_minus_1');
+            }
+
+            // Update player with cleared buff (if any)
+            let updatedPlayers = [...state.players];
+            updatedPlayers[state.currentPlayerIndex] = { ...p, buffs: newBuffs };
+
+            return {
+                ...log(state, `${p.name} 掷出了 ${roll} 点`),
+                players: updatedPlayers,
+                dice: roll,
+                pendingMove: roll,
+                phase: 'MOVING'
+            };
+        }
+
+        case 'MOVE_STEP': {
+            const { targetNodeId } = action.payload;
+            const pIndex = state.currentPlayerIndex;
+            const p = state.players[pIndex];
+
+            // Validate adjacency
+            const currentNode = state.mapNodes[p.position];
+            if (!currentNode.connections.includes(targetNodeId)) {
+                return state; // Invalid move
+            }
+
+            // Execute Move
+            const moveCost = getMoveCost(p);
+            let newPower = p.power - moveCost;
+            // Round to 2 decimal places to avoid floating point precision issues
+            newPower = Math.round(newPower * 100) / 100;
+            newPower = Math.max(0, newPower);
+            const newPending = state.pendingMove - 1;
+
+            let updatedPlayers = [...state.players];
+            updatedPlayers[pIndex] = { ...p, position: targetNodeId, power: newPower };
+
+            let newState = { ...state, players: updatedPlayers, pendingMove: newPending };
+
+            // Log detailed movement resource change
+            const remPower = Number(newPower.toFixed(1)); // Format to 1 decimal
+            newState = log(newState, `${p.name} 移动一步 (电量 -${moveCost}, 剩余 ${remPower})`);
+
+            // Emergency Check during movement
+            if (newPower < 0) { // Should not happen if logic is correct, but < 0.5 check is for NEXT move
+                // If we reached 0, it's fine as long as we don't need to move more.
+                // But rule: "If power insufficient... trigger emergency". 
+                // Implies check happens BEFORE move. Here we checked.
+            }
+
+            // Check if finished moving
+            if (newPending === 0) {
+                return handleLandOnNode(newState, updatedPlayers[pIndex], state.mapNodes[targetNodeId]);
+            } else {
+                // Prepare for next step, check power again
+                if (newPower < moveCost) {
+                    return handleEmergencyCharge(newState, updatedPlayers[pIndex]);
+                }
+                return newState;
+            }
+        }
+
+        case 'RESOLVE_MODAL': {
+            // Check for chained events (e.g. Retrigger Fate)
+            if (state.modal && state.modal.triggerNext) {
+                const p = state.players[state.currentPlayerIndex];
+                const nextNode = state.mapNodes[p.position];
+                // Continue handling the new node immediately after closing current modal
+                return handleLandOnNode({ ...state, modal: null }, p, nextNode);
+            }
+            // Close modal and End Turn usually
+            return endTurn({ ...state, modal: null });
+        }
+
+        case 'BUY_SHOP': {
+            const pIndex = state.currentPlayerIndex;
+            const p = state.players[pIndex];
+            const { shop } = action.payload; // { name, type, price }
+
+            if (p.money < shop.price) return state; // Should be guarded by UI
+
+            const newPlayers = [...state.players];
+            newPlayers[pIndex] = {
+                ...p,
+                money: Math.max(0, p.money - shop.price),
+                coupons: [...p.coupons, shop],
+                buffs: (p.buffs || []).filter(b => b !== 'discount_2') // Consume discount buff
+            };
+
+            let s = log(state, `${p.name} 购买了 ${shop.name} (-${shop.price}元, 剩余 ${newPlayers[pIndex].money}元)`);
+
+            // Meituan Passive: Bonus for specific shop types
+            const f = p.stats.faction;
+            if (f.passives.shopBonusTypes && f.passives.shopBonusTypes.includes(shop.type)) {
+                // Calculate Bonus
+                let bonus = f.passives.shopBonusAmount || 2;
+                if (f.passives.shopBonusBuffCondition) {
+                    if (p.coupons.length >= f.passives.shopBonusBuffCondition.minCoupons) {
+                        bonus = f.passives.shopBonusBuffCondition.amount;
+                    }
+                }
+                newPlayers[pIndex].money += bonus;
+                s = log(s, `${p.name} 触发被动：获得 ${bonus} 元返利！`);
+            }
+
+            s = { ...s, players: newPlayers, modal: null }; // Clears modal here
+
+            // Winner Check
+            if (checkVictory(newPlayers[pIndex], state.victoryTarget)) {
+                return { ...s, winner: p.name, gameLog: [`🏆 ${p.name} 获胜！`, ...s.gameLog] };
+            }
+
+            return endTurn(s);
+        }
+
+        case 'SKIP_BUY': {
+            return endTurn({ ...state, modal: null });
+        }
+
+        case 'USE_SKILL': {
+            const pIndex = state.currentPlayerIndex;
+            const p = state.players[pIndex];
+            const skill = p.stats.faction.activeSkill;
+
+            if (!skill) return state;
+            if (p.skillCooldown > 0) return log(state, "技能冷却中！");
+
+            // Eleme: Power to Money
+            if (skill.id === 'power_to_money') {
+                if (p.power < skill.costPower) return log(state, "电量不足，无法发动！");
+
+                const newPlayers = [...state.players];
+                newPlayers[pIndex] = {
+                    ...p,
+                    power: Math.max(0, p.power - skill.costPower),
+                    money: p.money + skill.gainMoney,
+                    skillCooldown: skill.cooldown
+                };
+                return log({ ...state, players: newPlayers }, `${p.name} 发动技能：转化 3 电量为 2 元 (剩余电量 ${newPlayers[pIndex].power}, 资金 ${newPlayers[pIndex].money})`);
+            }
+
+            // Guochao: Pause Enemy
+            if (skill.id === 'pause_enemy') {
+                const { targetId } = action.payload;
+                // Validation
+                if (targetId === undefined || targetId === pIndex) return state;
+                if (p.money < skill.cost) return log(state, "资金不足，无法发动！");
+
+                const newPlayers = [...state.players];
+                // Cost & Cooldown
+                newPlayers[pIndex] = {
+                    ...p,
+                    money: Math.max(0, p.money - skill.cost),
+                    skillCooldown: skill.cooldown // Apply cooldown from faction config
+                };
+                // Effect
+                const target = newPlayers[targetId];
+                newPlayers[targetId] = { ...target, isSkipped: true, money: target.money + 1 };
+
+                return log({ ...state, players: newPlayers }, `${p.name} 发动技能：暂停 ${target.name} (花费 ${skill.cost}, 剩余 ${newPlayers[pIndex].money})`);
+            }
+
+            return state;
+        }
+
+        default: return state;
+    }
+}
+
+function handleLandOnNode(state, player, node) {
+    const f = player.stats.faction;
+
+    // 1. Shop
+    if (node.type === 'shop') {
+        // Check if owned
+        const hasCoupon = player.coupons.some(c => c.name === node.shop.name);
+        if (!hasCoupon) {
+            let finalPrice = node.shop.price;
+            if (f.passives.shopCostExtra) finalPrice += f.passives.shopCostExtra;
+
+            // Buff: Discount
+            if (player.buffs && player.buffs.includes('discount_2')) {
+                finalPrice = Math.max(0, finalPrice - 2);
+                // We don't remove buff here, we remove it when purchased? Or usually single use?
+                // Let's assume single use. But we are in "View" mode here (generating modal).
+                // Real removal happens in BUY_SHOP.
+            }
+
+            // Dingdong Passive: -2 if no fate for 3 turns
+            if (f.passives.shopDiscountCondition === 'no_fate_3_turns') {
+                if (player.turnsSinceFate >= 3) {
+                    finalPrice = Math.max(3, finalPrice - 2);
+                    // Note: We don't log here to avoid spam, but price will reflect it.
+                    // Could append to shop object to show "Discounted" in UI?
+                }
+            }
+
+            // Always show modal for Shop to confirm arrival, let Modal handle disable logic
+            return {
+                ...state,
+                phase: 'EVENT_HANDLING',
+                modal: {
+                    type: 'SHOP',
+                    shop: { ...node.shop, price: finalPrice }
+                }
+            };
+        } else {
+            // Already owned -> Bonus
+            const bonusPlayers = [...state.players];
+            bonusPlayers[player.id].money += 1; // Simplify to +1 money for now
+            return endTurn(log({ ...state, players: bonusPlayers }, `光顾自家店铺 ${node.shop.name}，获得 1 元`));
+        }
+    }
+
+    // 2. Charger
+    if (node.type === 'charger') {
+        let amount = f.passives.chargerBonus || 5;
+
+        // Check Buff: no_charger_10_turns
+        // Check Buff: no_charger_10_turns
+        // Check Buff: no_charger_5_turns
+        if (player.buffs && player.buffs.some(b => typeof b === 'object' ? b.id === 'no_charger_5_turns' : b === 'no_charger_5_turns')) {
+            const buff = player.buffs.find(b => typeof b === 'object' && b.id === 'no_charger_5_turns');
+            const remaining = buff ? buff.duration : '?';
+            return endTurn(log(state, `电池老化，无法充电！(剩余 ${remaining} 回合)`));
+        }
+
+        const newPlayers = [...state.players];
+        newPlayers[player.id] = { ...newPlayers[player.id], power: newPlayers[player.id].power + amount };
+        return endTurn(log({ ...state, players: newPlayers }, `充电完成！电量 +${amount} (当前 ${newPlayers[player.id].power})`));
+    }
+
+    // 3. Money Station
+    if (node.type === 'money') {
+        let amount = f.passives.moneyStationBonus || 5;
+        const newPlayers = [...state.players];
+        newPlayers[player.id] = { ...newPlayers[player.id], money: newPlayers[player.id].money + amount };
+        return endTurn(log({ ...state, players: newPlayers }, `打工结束！金钱 +${amount} (当前 ${newPlayers[player.id].money})`));
+    }
+
+    // 4. Hospital
+    if (node.type === 'hospital') {
+        if (f.passives.hospitalImmunity) {
+            return endTurn(log(state, `到达医院，但拥有免疫特权！`));
+        }
+        const newPlayers = [...state.players];
+        newPlayers[player.id] = { ...newPlayers[player.id], isSkipped: true };
+        return endTurn(log({ ...state, players: newPlayers }, `进入医院，下回合暂停！`));
+    }
+
+    // 5. Fate
+    if (node.type === 'fate') {
+        const event = FATE_EVENTS[Math.floor(Math.random() * FATE_EVENTS.length)];
+
+        // Process simple effects immediately, complex ones need modal logic
+        // For MVP, implementing simple resource effects
+        let msg = `命运时间: ${event.text}`;
+        let newState = state;
+
+        // Apply simple effects
+        const newPlayers = [...state.players];
+        let p = { ...newPlayers[player.id] };
+        const initialMoney = p.money;
+        const initialPower = p.power;
+
+        // 1. Simple Effects (effect property)
+        if (event.effect) {
+            if (event.effect.money) p.money = Math.max(0, p.money + event.effect.money);
+            if (event.effect.power) p.power = Math.max(0, p.power + event.effect.power);
+            // Buffs logic placeholders
+        }
+
+        // 2. Complex Logic based on Type
+        switch (event.type) {
+            case 'lose_power_or_hospital':
+                if (p.power >= event.amount) {
+                    p.power -= event.amount;
+                } else {
+                    p.power = 0;
+                    if (!f.passives.hospitalImmunity) {
+                        // Find nearest hospital and teleport
+                        const hospitals = state.mapNodes.filter(n => n.type === 'hospital');
+                        if (hospitals.length > 0) {
+                            const nearestHospital = hospitals[0]; // For simplicity, pick first one
+                            p.position = nearestHospital.id;
+                            p.isSkipped = true;
+                            msg += ` -> 电量不足，传送至医院`;
+                        } else {
+                            p.isSkipped = true; // Fallback if no hospital exists
+                        }
+                    }
+                }
+                break;
+
+            case 'steal_money':
+                // Find random target with money
+                const victims = newPlayers.filter(vp => vp.id !== player.id && vp.money > 0);
+                if (victims.length > 0) {
+                    const victim = victims[Math.floor(Math.random() * victims.length)];
+                    const stealAmount = Math.min(victim.money, event.amount);
+
+                    // Update Victim
+                    newPlayers[victim.id] = { ...victim, money: victim.money - stealAmount };
+                    // Update Self
+                    p.money += stealAmount;
+                }
+                break;
+
+            case 'stun_random_enemy':
+                const enemies = newPlayers.filter(vp => vp.id !== player.id);
+                if (enemies.length > 0) {
+                    const target = enemies[Math.floor(Math.random() * enemies.length)];
+                    newPlayers[target.id] = { ...target, isSkipped: true };
+                }
+                break;
+
+            case 'catchup_bonus':
+                // Check original state for counts to be safe
+                const allCounts = state.players.map(pl => pl.coupons.length);
+                const minCoupons = Math.min(...allCounts);
+                const maxCoupons = Math.max(...allCounts);
+
+                // Only grant bonus if player is at the bottom AND not everyone is equal (someone is ahead)
+                if (p.coupons.length === minCoupons && minCoupons < maxCoupons) {
+                    p.money += 1;
+                    p.power += 1;
+                }
+                break;
+
+            case 'buy_random_coupon':
+                if (p.money >= event.cost) {
+                    const allShops = state.mapNodes
+                        .filter(n => n.type === 'shop')
+                        .map(n => n.shop);
+
+                    // Filter shops not owned by player
+                    const unownedShops = allShops.filter(s => !p.coupons.some(c => c.name === s.name));
+
+                    if (unownedShops.length > 0) {
+                        p.money = Math.max(0, p.money - event.cost);
+                        const wonShop = unownedShops[Math.floor(Math.random() * unownedShops.length)];
+                        p.coupons = [...p.coupons, wonShop];
+                        msg += ` -> 交易成功！获得 [${wonShop.name}]`;
+                        // Trigger Meituan Passive check if relevant? 
+                        // The passive "shopBonusBuffCondition" usually applies on PURCHASE (BUY_SHOP action).
+                        // Technically this is a "purchase" event (Black Market).
+                        // Let's keep it simple for now, just grant coupon.
+                    } else {
+                        msg += ` -> 市场上没有可购买的店铺了 (退款)`;
+                    }
+                } else {
+                    msg += ` -> 资金不足 (需要 ${event.cost} 元)`;
+                }
+                break;
+            case 'choice':
+                // Auto-pick random option for now (MVP), or Option 0
+                if (event.options && event.options.length > 0) {
+                    const picked = event.options[Math.floor(Math.random() * event.options.length)];
+                    msg += ` -> 随机选择了: ${picked.text}`;
+                    newState = log(newState, `自动选择: ${picked.text}`);
+                    if (picked.effect.money) p.money = Math.max(0, p.money + picked.effect.money);
+                    if (picked.effect.power) p.power = Math.max(0, p.power + picked.effect.power);
+                }
+                break;
+
+            case 'teleport_random':
+                // Find non-hospital, non-fate nodes? specific random logic
+                const validNodes = state.mapNodes.filter(n => n.type !== 'hospital');
+                const targetNode = validNodes[Math.floor(Math.random() * validNodes.length)];
+                p.position = targetNode.id;
+                msg += ` -> 传送至 [${targetNode.id}]`;
+                break;
+
+            case 'teleport_choice':
+                // Randomly pick a valid target type node
+                if (event.targets) {
+                    const candidates = state.mapNodes.filter(n => event.targets.includes(n.type));
+                    if (candidates.length > 0) {
+                        const t = candidates[Math.floor(Math.random() * candidates.length)];
+                        p.position = t.id;
+                        msg += ` -> 传送至 ${t.type} [${t.id}]`;
+                    }
+                }
+                break;
+
+            case 'swap_position':
+                const swapTarget = newPlayers.find(pl => pl.id !== player.id);
+                if (swapTarget) {
+                    const myPos = p.position;
+                    p.position = swapTarget.position;
+                    // Update target
+                    newPlayers[swapTarget.id] = { ...swapTarget, position: myPos };
+                    msg += ` -> 与 ${swapTarget.name} 互换位置`;
+                }
+                break;
+
+            case 'extra_turn':
+                p.extraTurn = true;
+                msg += ` -> 获得额外回合!`;
+                break;
+
+            case 'retrigger_fate':
+                // Find another fate node
+                const otherFates = state.mapNodes.filter(n => n.type === 'fate' && n.id !== node.id);
+                if (otherFates.length > 0) {
+                    const nextFate = otherFates[Math.floor(Math.random() * otherFates.length)];
+                    p.position = nextFate.id;
+                    // Recursive trigger? 
+                    // For safety, just move there and let them trigger it next turn?
+                    // Or trigger immediately. 
+                    // If we trigger immediately, we need to return the result of that trigger.
+                    // But we are deep in state construction.
+                    // Let's just move them and say "Will trigger next turn" or effectively end turn on that spot?
+                    // If we end turn, next player goes.
+                    // If we want them to trigger it NOW, we need complex recursion.
+                    // Simplified: Move there. Give Extra Turn so they land on it? No, they are already on it.
+                    // Mechanics: Just move. Next time they "land" (which is now), they process?
+                    // They won't process it because 'handleLandOnNode' is done.
+                    // Let's just grant a small bonus instead to avoid complexity for now? 
+                    // Or just move them.
+                    msg += ` -> 传送至另一命运点`;
+                }
+                break;
+        }
+
+        // 3. Buffs application from Event
+        // 3. Buffs application from Event
+        if (event.effect && event.effect.buff) {
+            const currentBuffs = p.buffs || [];
+            if (event.effect.buff === 'no_charger_5_turns') {
+                // Object buff
+                if (!currentBuffs.some(b => b.id === 'no_charger_5_turns')) {
+                    p.buffs = [...currentBuffs, { id: 'no_charger_5_turns', label: '电池老化', duration: 6 }];
+                }
+            } else {
+                // String buff (legacy/simple)
+                if (!currentBuffs.includes(event.effect.buff)) {
+                    p.buffs = [...currentBuffs, event.effect.buff];
+                }
+            }
+        }
+
+        // Calculate changes for detailed logging
+        const moneyDiff = p.money - initialMoney;
+        const powerDiff = p.power - initialPower;
+        let changeMsg = [];
+        if (moneyDiff !== 0) changeMsg.push(`金钱 ${moneyDiff > 0 ? '+' : ''}${moneyDiff}`);
+        if (powerDiff !== 0) changeMsg.push(`电量 ${powerDiff > 0 ? '+' : ''}${powerDiff}`);
+
+        if (changeMsg.length > 0) {
+            msg += ` [${changeMsg.join(', ')}]`;
+        }
+        msg += ` (当前: ${p.money}金 / ${p.power}电)`;
+
+        // Log the detailed message
+        newState = log(newState, msg);
+
+        // Save updated player state back to array, ensuring turnsSinceFate is reset
+        newPlayers[player.id] = { ...p, turnsSinceFate: 0 };
+
+        newState.players = newPlayers;
+        newState.modal = {
+            type: 'FATE',
+            text: event.text,
+            event: event,
+            triggerNext: ['retrigger_fate', 'teleport_random', 'teleport_choice', 'swap_position'].includes(event.type)
+        };
+        newState.phase = 'EVENT_HANDLING';
+
+        // IMPORTANT: Ensure we don't return endTurn here, we wait for Modal resolve.
+        return newState;
+    }
+
+    // Normal
+    return endTurn(state);
+}
+
+function handleEmergencyCharge(state, player) {
+    // Find nearest charger
+    const chargers = state.mapNodes.filter(n => n.type === 'charger');
+    const target = chargers[Math.floor(Math.random() * chargers.length)]; // Random for now
+
+    // Calculate charge amount based on faction passive
+    const chargeAmount = player.stats.faction.passives.chargerBonus || 5;
+
+    const newPlayers = [...state.players];
+    newPlayers[player.id] = {
+        ...player,
+        position: target.id,
+        power: chargeAmount,
+        money: Math.max(0, player.money - 2)
+    };
+
+    return endTurn(log({ ...state, players: newPlayers }, `⚡ 紧急充电！扣除 2 元，传送至充电桩 (获得 ${chargeAmount} 电量)`));
+}
+
+// Helper for ending turn
+function endTurn(state) {
+    let logMsg = [];
+    let nextIdx = (state.currentPlayerIndex + 1) % state.players.length; // Use actual length
+    let nextPlayer = state.players[nextIdx];
+
+    // Decrement Cooldowns for next player
+    if (nextPlayer.skillCooldown > 0) nextPlayer.skillCooldown--;
+    if (nextPlayer.highPowerCooldown > 0) nextPlayer.highPowerCooldown--;
+
+    // Increment trackers for next player (they are about to start their turn, so 1 more turn passed without Fate?)
+    // Actually, "Continuous 3 turns" usually means "Since I last touched it".
+    // We increment at End of Turn for the player who JUST finished? 
+    // Or Start of their turn?
+    // Let's increment for the CURRENT player who just finished.
+    // Let's increment for the CURRENT player who just finished.
+    let currentPlayers = [...state.players];
+    const finishedPlayer = currentPlayers[state.currentPlayerIndex];
+
+    // Decrement Buffs for the finished player
+    if (finishedPlayer.buffs && finishedPlayer.buffs.length > 0) {
+        finishedPlayer.buffs = finishedPlayer.buffs.map(b => {
+            if (typeof b === 'object' && b.duration) {
+                return { ...b, duration: b.duration - 1 };
+            }
+            return b;
+        }).filter(b => {
+            if (typeof b === 'object') return b.duration > 0;
+            return true; // Keep string buffs
+        });
+    }
+
+    // Extra Turn Check
+    if (currentPlayers[state.currentPlayerIndex].extraTurn) {
+        logMsg.push(`[${currentPlayers[state.currentPlayerIndex].name}] 触发额外回合！`);
+        // Consume extra turn
+        currentPlayers[state.currentPlayerIndex] = { ...currentPlayers[state.currentPlayerIndex], extraTurn: false };
+        // Return state with same index, same turn count
+        let finalState = {
+            ...state,
+            players: currentPlayers,
+            phase: 'IDLE',
+            dice: 0,
+            modal: null
+        };
+        if (logMsg.length > 0) finalState = log(finalState, logMsg.join(' | '));
+        return finalState;
+    }
+
+    currentPlayers[state.currentPlayerIndex].turnsSinceFate += 1;
+
+    // Check Eleme High Power Passive (Triggered at End of Turn?)
+    // "If current power > 10, gain +2 money (3 turn CD)"
+    // Let's check for the player who just moved (state.currentPlayerIndex).
+    const currP = currentPlayers[state.currentPlayerIndex];
+    if (currP.stats.faction.passives.highPowerBonus) {
+        const hpb = currP.stats.faction.passives.highPowerBonus;
+        if (currP.highPowerCooldown === 0 && currP.power > hpb.threshold) {
+            currP.money += hpb.amount;
+            currP.highPowerCooldown = hpb.cooldown;
+            logMsg.push(`[${currP.name}] 电量充盈(>${hpb.threshold})：获得资金 +${hpb.amount}`);
+        }
+    }
+
+    // Check Faction Passive Regen (Start of turn?) 
+    // Rules say: "Every 3 turns +0.5 power". Ideally checked at start of THEIR turn.
+    // We'll advance turn counter when circle completes? 
+    // Let's increment global turn when P0 moves.
+
+    // Logic: A "Turn" (Round) is defined as when ALL players have moved.
+    // So we increment the global turn counter only when the index wraps back to 0.
+    let newTurn = state.turn;
+    const roundEnded = (nextIdx === 0);
+
+    // Accumulate Logs
+
+    if (roundEnded) {
+        newTurn++;
+        // Adding visual separator for rounds
+        logMsg.push(`====== 第 ${state.turn} 回合结束 ======`);
+        logMsg.push(`====== 第 ${newTurn} 回合开始 ======`);
+    }
+
+    // Handle Skip
+    if (nextPlayer.isSkipped) {
+        const skippedState = log(state, `${nextPlayer.name} 暂停一回合`);
+        let players = [...state.players];
+        // Fix: Do not mutate nextPlayer directly. Create a copy.
+        players[nextIdx] = { ...nextPlayer, isSkipped: false };
+
+        // Recurse to find next valid
+        return endTurn({
+            ...skippedState,
+            currentPlayerIndex: nextIdx,
+            players,
+            turn: (roundEnded ? newTurn : state.turn)
+        });
+    }
+
+    // Apply Passive Regen for Next Player
+    let players = [...state.players];
+    const p = players[nextIdx];
+    const f = p.stats.faction;
+    const currentRound = (roundEnded ? newTurn : state.turn);
+
+    // logMsg is already declared above
+
+    // Power Regen
+    if (f.passives.powerRegen) {
+        if (currentRound > 0 && currentRound % f.passives.powerRegen.every === 0) {
+            players[nextIdx].power += f.passives.powerRegen.amount;
+            logMsg.push(`[${p.name}] 被动触发：电量 +${f.passives.powerRegen.amount}`);
+        }
+    }
+
+    // Money Regen
+    if (f.passives.moneyRegen) {
+        if (currentRound > 0 && currentRound % f.passives.moneyRegen.every === 0) {
+            players[nextIdx].money += f.passives.moneyRegen.amount;
+            logMsg.push(`[${p.name}] 被动触发：金钱 +${f.passives.moneyRegen.amount}`);
+        }
+    }
+
+    let finalState = {
+        ...state,
+        currentPlayerIndex: nextIdx,
+        turn: newTurn, // newTurn is calculated above in the original function
+        phase: 'IDLE',
+        dice: 0,
+        players,
+        modal: null
+    };
+
+    if (logMsg.length > 0) {
+        finalState = log(finalState, logMsg.join(' | '));
+    }
+
+    return finalState;
+}
+
+function checkVictory(player, victoryTarget = 10) {
+    const unique = new Set(player.coupons.map(c => c.name)).size;
+    return unique >= victoryTarget;
+}
+
+export const GameProvider = ({ children }) => {
+    const [state, dispatch] = useReducer(gameReducer, INITIAL_STATE);
+
+    // Allow dispatch inside reducer helpers by attaching it to state temporarily or using a ref.
+    // But purely functional is better. The helper functions above return NEW STATE.
+    // They don't dispatch.
+    // The 'actions' in modal, however, need access to dispatch.
+    // We passed `() => state.dispatch(...)` which is wrong because `state` is stale in closure.
+    // We should pass `dispatch`. 
+    // Correct pattern: Modal actions dispatch generic events, Component uses dispatch.
+
+    // FIX: Modal config should just identify the event type, and the Modal Component calls dispatch.
+    // Refactoring Modal interactions.
+
+    const enhancedDispatch = (action) => {
+        // Middleware or logging could go here
+        dispatch(action);
+    };
+
+    // Patch state with dispatch for the modal closures (hacky but works for generated modals)
+    // Better: The modal object stores "callback IDENTIFIERS", and the Modal component maps them.
+    // But for speed:
+    const stateWithDispatch = { ...state, dispatch: enhancedDispatch };
+
+    return (
+        <GameContext.Provider value={{ state: stateWithDispatch, dispatch: enhancedDispatch }}>
+            {children}
+        </GameContext.Provider>
+    );
+};
+
+export const useGame = () => useContext(GameContext);
