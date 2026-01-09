@@ -13,6 +13,7 @@ const SetupScreen = () => {
     const [playerCount, setPlayerCount] = useState(4);
     const [playerConfigs, setPlayerConfigs] = useState([]); // [{ name, factionId }]
     const [currentSelector, setCurrentSelector] = useState(0); // Index of player choosing
+    const [isCurrentPlayerAI, setIsCurrentPlayerAI] = useState(false);
     const [hoveredFaction, setHoveredFaction] = useState(null);
     const [hoverRect, setHoverRect] = useState(null);
 
