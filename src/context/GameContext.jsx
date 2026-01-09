@@ -1,8 +1,9 @@
 
-import React, { createContext, useReducer, useContext } from 'react';
+import React, { createContext, useReducer, useContext, useEffect, useRef } from 'react';
 import { generateMap } from '../engine/MapGenerator';
 import { FACTIONS } from '../data/factions';
 import { FATE_EVENTS } from '../data/fateEvents';
+import { findBestMove, shouldBuyShop, getNextStepToward } from '../utils/aiLogic';
 
 const GameContext = createContext();
 
@@ -53,6 +54,7 @@ function gameReducer(state, action) {
                     turnsSinceFate: 0,
                     buffs: [],
                     extraTurn: false,
+                    isAI: cfg.isAI || false,
                     stats: { faction: f }
                 };
             });
@@ -723,26 +725,94 @@ function checkVictory(player, victoryTarget = 10) {
 
 export const GameProvider = ({ children }) => {
     const [state, dispatch] = useReducer(gameReducer, INITIAL_STATE);
+    const aiTargetRef = useRef(null);
 
-    // Allow dispatch inside reducer helpers by attaching it to state temporarily or using a ref.
-    // But purely functional is better. The helper functions above return NEW STATE.
-    // They don't dispatch.
-    // The 'actions' in modal, however, need access to dispatch.
-    // We passed `() => state.dispatch(...)` which is wrong because `state` is stale in closure.
-    // We should pass `dispatch`. 
-    // Correct pattern: Modal actions dispatch generic events, Component uses dispatch.
+    // AI Logic Loop
+    useEffect(() => {
+        const currentPlayer = state.players[state.currentPlayerIndex];
+        // Ensure game is initialized and player exists
+        if (!currentPlayer || !currentPlayer.isAI || state.winner || state.phase === 'SETUP') return;
 
-    // FIX: Modal config should just identify the event type, and the Modal Component calls dispatch.
-    // Refactoring Modal interactions.
+        let isMounted = true;
+        const delay = (ms) => new Promise(res => setTimeout(res, ms));
+
+        const runAI = async () => {
+            // 1. IDLE Phase: Roll Dice
+            if (state.phase === 'IDLE') {
+                aiTargetRef.current = null; // Reset target
+                await delay(1000);
+                if (isMounted) dispatch({ type: 'ROLL_DICE' });
+            }
+            // 2. MOVING Phase
+            else if (state.phase === 'MOVING') {
+                await delay(800);
+                if (!isMounted) return;
+
+                // Calculate Target if needed
+                // If pendingMove equals dice, we are at the start of movement (or we just rolled)
+                // We should calculate target once.
+                if (state.pendingMove === state.dice || !aiTargetRef.current) {
+                     const target = findBestMove(
+                         currentPlayer.position, 
+                         state.dice, 
+                         currentPlayer, 
+                         state.mapNodes, 
+                         state.players
+                     );
+                     aiTargetRef.current = target;
+                }
+
+                if (state.pendingMove > 0) {
+                     // If we have a target, move towards it
+                     // If for some reason target is null (shouldn't happen), fallback
+                     const target = aiTargetRef.current || currentPlayer.position;
+                     
+                     const nextStep = getNextStepToward(
+                         currentPlayer.position, 
+                         target, 
+                         state.pendingMove, 
+                         state.mapNodes
+                     );
+                     
+                     if (nextStep) {
+                         dispatch({ type: 'MOVE_STEP', payload: { targetNodeId: nextStep } });
+                     } else {
+                         // Fallback: pick first neighbor
+                         const currNode = state.mapNodes[currentPlayer.position];
+                         if (currNode && currNode.connections.length > 0) {
+                            dispatch({ type: 'MOVE_STEP', payload: { targetNodeId: currNode.connections[0] } });
+                         }
+                     }
+                }
+            }
+            // 3. EVENT_HANDLING (Modals)
+            else if (state.phase === 'EVENT_HANDLING' && state.modal) {
+                await delay(1500);
+                if (!isMounted) return;
+
+                if (state.modal.type === 'SHOP') {
+                    const shouldBuy = shouldBuyShop(state.modal.shop, currentPlayer, state.victoryTarget);
+                    if (shouldBuy) {
+                        dispatch({ type: 'BUY_SHOP', payload: { shop: state.modal.shop } });
+                    } else {
+                        dispatch({ type: 'SKIP_BUY' });
+                    }
+                } else {
+                    // Fate or others -> Resolve
+                    dispatch({ type: 'RESOLVE_MODAL' });
+                }
+            }
+        };
+
+        runAI();
+
+        return () => { isMounted = false; };
+    }, [state.phase, state.currentPlayerIndex, state.pendingMove, state.modal, state.turn, state.dice, state.players, state.winner, state.mapNodes, state.victoryTarget]); 
 
     const enhancedDispatch = (action) => {
-        // Middleware or logging could go here
         dispatch(action);
     };
 
-    // Patch state with dispatch for the modal closures (hacky but works for generated modals)
-    // Better: The modal object stores "callback IDENTIFIERS", and the Modal component maps them.
-    // But for speed:
     const stateWithDispatch = { ...state, dispatch: enhancedDispatch };
 
     return (

@@ -171,9 +171,16 @@ const SidePanel = () => {
             {/* Active Control Area */}
             {activePlayer && (
                 <div className="bg-slate-800 p-3 sm:p-4 rounded-xl border border-slate-600 mb-3 sm:mb-4">
-                    <div className="text-sm text-slate-400 mb-2">当前行动: <span className="text-white font-bold">{activePlayer.name}</span></div>
+                    <div className="text-sm text-slate-400 mb-2 flex justify-between items-center">
+                        <span>当前行动: <span className="text-white font-bold">{activePlayer.name}</span></span>
+                        {activePlayer.isAI && (
+                            <span className="flex items-center gap-1 text-xs text-cyan-400 font-mono animate-pulse bg-cyan-900/30 px-2 py-0.5 rounded border border-cyan-500/30">
+                                <Bot size={12} /> AI 思考中...
+                            </span>
+                        )}
+                    </div>
 
-                    <div className="flex flex-col gap-2">
+                    <div className={clsx("flex flex-col gap-2", activePlayer.isAI && "opacity-50 pointer-events-none")}>
                         {/* Active Skill Area */}
                         {activePlayer.stats.faction.activeSkill && (
                             <div className="mb-3 p-2 bg-slate-900/80 rounded border border-purple-500/30">

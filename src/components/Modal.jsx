@@ -69,8 +69,14 @@ const Modal = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-80 backdrop-blur-sm">
             <div className={clsx(
                 "bg-slate-800 border-2 rounded-xl p-4 sm:p-6 max-w-md w-full mx-4 shadow-[0_0_50px_rgba(0,0,0,0.5)] relative overflow-hidden animate-in fade-in zoom-in duration-200",
-                typeColor
+                typeColor,
+                isAI && "pointer-events-none"
             )}>
+                {isAI && (
+                    <div className="absolute top-0 right-0 bg-cyan-600/20 text-cyan-400 text-xs px-2 py-1 rounded-bl-lg font-mono border-b border-l border-cyan-500/30">
+                        AI DECIDING...
+                    </div>
+                )}
                 <h2 className="text-xl sm:text-2xl font-bold mb-4 text-white text-shadow-md">{title}</h2>
                 <div className="mb-6 sm:mb-8">{content}</div>
                 <div className="flex justify-end gap-3">{actions}</div>
