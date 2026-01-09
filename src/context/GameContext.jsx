@@ -4,6 +4,7 @@ import { generateMap } from '../engine/MapGenerator';
 import { FACTIONS } from '../data/factions';
 import { FATE_EVENTS } from '../data/fateEvents';
 import { findBestMove, shouldBuyShop, getNextStepToward } from '../utils/aiLogic';
+import { getWeightedRandom } from '../utils/gameUtils';
 
 const GameContext = createContext();
 
@@ -53,6 +54,7 @@ function gameReducer(state, action) {
                     highPowerCooldown: 0,
                     turnsSinceFate: 0,
                     buffs: [],
+                    shields: 0,
                     extraTurn: false,
                     isAI: cfg.isAI || false,
                     stats: { faction: f }
@@ -233,6 +235,13 @@ function gameReducer(state, action) {
                 };
                 // Effect
                 const target = newPlayers[targetId];
+                
+                // Shield Defense Logic
+                if (target.shields > 0) {
+                    newPlayers[targetId] = { ...target, shields: target.shields - 1 };
+                    return log({ ...state, players: newPlayers }, `${p.name} 发动技能，但被 ${target.name} 的护盾抵御了！(消耗 1 个护盾)`);
+                }
+
                 newPlayers[targetId] = { ...target, isSkipped: true, money: target.money + 1 };
 
                 return log({ ...state, players: newPlayers }, `${p.name} 发动技能：暂停 ${target.name} (花费 ${skill.cost}, 剩余 ${newPlayers[pIndex].money})`);
@@ -328,10 +337,9 @@ function handleLandOnNode(state, player, node) {
 
     // 5. Fate
     if (node.type === 'fate') {
-        const event = FATE_EVENTS[Math.floor(Math.random() * FATE_EVENTS.length)];
+        const event = getWeightedRandom(FATE_EVENTS);
 
         // Process simple effects immediately, complex ones need modal logic
-        // For MVP, implementing simple resource effects
         let msg = `命运时间: ${event.text}`;
         let newState = state;
 
@@ -345,65 +353,19 @@ function handleLandOnNode(state, player, node) {
         if (event.effect) {
             if (event.effect.money) p.money = Math.max(0, p.money + event.effect.money);
             if (event.effect.power) p.power = Math.max(0, p.power + event.effect.power);
-            // Buffs logic placeholders
+            if (event.effect.shield) p.shields = Math.min(3, (p.shields || 0) + event.effect.shield);
+            if (event.effect.skip) p.isSkipped = true;
         }
 
         // 2. Complex Logic based on Type
         switch (event.type) {
-            case 'lose_power_or_hospital':
-                if (p.power >= event.amount) {
-                    p.power -= event.amount;
-                } else {
-                    p.power = 0;
-                    if (!f.passives.hospitalImmunity) {
-                        // Find nearest hospital and teleport
-                        const hospitals = state.mapNodes.filter(n => n.type === 'hospital');
-                        if (hospitals.length > 0) {
-                            const nearestHospital = hospitals[0]; // For simplicity, pick first one
-                            p.position = nearestHospital.id;
-                            p.isSkipped = true;
-                            msg += ` -> 电量不足，传送至医院`;
-                        } else {
-                            p.isSkipped = true; // Fallback if no hospital exists
-                        }
-                    }
-                }
-                break;
-
-            case 'steal_money': {
-                // Find random target with money
-                const victims = newPlayers.filter(vp => vp.id !== player.id && vp.money > 0);
-                if (victims.length > 0) {
-                    const victim = victims[Math.floor(Math.random() * victims.length)];
-                    const stealAmount = Math.min(victim.money, event.amount);
-
-                    // Update Victim
-                    newPlayers[victim.id] = { ...victim, money: victim.money - stealAmount };
-                    // Update Self
-                    p.money += stealAmount;
-                }
-                break;
-            }
-
-            case 'stun_random_enemy': {
-                const enemies = newPlayers.filter(vp => vp.id !== player.id);
-                if (enemies.length > 0) {
-                    const target = enemies[Math.floor(Math.random() * enemies.length)];
-                    newPlayers[target.id] = { ...target, isSkipped: true };
-                }
-                break;
-            }
-
-            case 'catchup_bonus': {
-                // Check original state for counts to be safe
-                const allCounts = state.players.map(pl => pl.coupons.length);
-                const minCoupons = Math.min(...allCounts);
-                const maxCoupons = Math.max(...allCounts);
-
-                // Only grant bonus if player is at the bottom AND not everyone is equal (someone is ahead)
-                if (p.coupons.length === minCoupons && minCoupons < maxCoupons) {
-                    p.money += 1;
-                    p.power += 1;
+            case 'teleport_hospital': {
+                const hospitals = state.mapNodes.filter(n => n.type === 'hospital');
+                if (hospitals.length > 0) {
+                    const nearestHospital = hospitals[0];
+                    p.position = nearestHospital.id;
+                    if (!f.passives.hospitalImmunity) p.isSkipped = true;
+                    msg += ` -> 传送至医院`;
                 }
                 break;
             }
@@ -414,7 +376,6 @@ function handleLandOnNode(state, player, node) {
                         .filter(n => n.type === 'shop')
                         .map(n => n.shop);
 
-                    // Filter shops not owned by player
                     const unownedShops = allShops.filter(s => !p.coupons.some(c => c.name === s.name));
 
                     if (unownedShops.length > 0) {
@@ -422,10 +383,6 @@ function handleLandOnNode(state, player, node) {
                         const wonShop = unownedShops[Math.floor(Math.random() * unownedShops.length)];
                         p.coupons = [...p.coupons, wonShop];
                         msg += ` -> 交易成功！获得 [${wonShop.name}]`;
-                        // Trigger Meituan Passive check if relevant? 
-                        // The passive "shopBonusBuffCondition" usually applies on PURCHASE (BUY_SHOP action).
-                        // Technically this is a "purchase" event (Black Market).
-                        // Let's keep it simple for now, just grant coupon.
                     } else {
                         msg += ` -> 市场上没有可购买的店铺了 (退款)`;
                     }
@@ -433,74 +390,24 @@ function handleLandOnNode(state, player, node) {
                     msg += ` -> 资金不足 (需要 ${event.cost} 元)`;
                 }
                 break;
-            case 'choice':
-                // Auto-pick random option for now (MVP), or Option 0
-                if (event.options && event.options.length > 0) {
-                    const picked = event.options[Math.floor(Math.random() * event.options.length)];
-                    msg += ` -> 随机选择了: ${picked.text}`;
-                    newState = log(newState, `自动选择: ${picked.text}`);
-                    if (picked.effect.money) p.money = Math.max(0, p.money + picked.effect.money);
-                    if (picked.effect.power) p.power = Math.max(0, p.power + picked.effect.power);
-                }
-                break;
-
-            case 'teleport_random': {
-                // Find non-hospital, non-fate nodes? specific random logic
-                const validNodes = state.mapNodes.filter(n => n.type !== 'hospital');
-                const targetNode = validNodes[Math.floor(Math.random() * validNodes.length)];
-                p.position = targetNode.id;
-                msg += ` -> 传送至 [${targetNode.id}]`;
-                break;
-            }
-
-            case 'teleport_choice':
-                // Randomly pick a valid target type node
-                if (event.targets) {
-                    const candidates = state.mapNodes.filter(n => event.targets.includes(n.type));
-                    if (candidates.length > 0) {
-                        const t = candidates[Math.floor(Math.random() * candidates.length)];
-                        p.position = t.id;
-                        msg += ` -> 传送至 ${t.type} [${t.id}]`;
-                    }
-                }
-                break;
 
             case 'swap_position': {
-                const swapTarget = newPlayers.find(pl => pl.id !== player.id);
-                if (swapTarget) {
+                const enemies = newPlayers.filter(pl => pl.id !== player.id);
+                if (enemies.length > 0) {
+                    const swapTarget = enemies[Math.floor(Math.random() * enemies.length)];
                     const myPos = p.position;
                     p.position = swapTarget.position;
-                    // Update target
                     newPlayers[swapTarget.id] = { ...swapTarget, position: myPos };
                     msg += ` -> 与 ${swapTarget.name} 互换位置`;
                 }
                 break;
             }
 
-            case 'extra_turn':
-                p.extraTurn = true;
-                msg += ` -> 获得额外回合!`;
-                break;
-
             case 'retrigger_fate': {
-                // Find another fate node
                 const otherFates = state.mapNodes.filter(n => n.type === 'fate' && n.id !== node.id);
                 if (otherFates.length > 0) {
                     const nextFate = otherFates[Math.floor(Math.random() * otherFates.length)];
                     p.position = nextFate.id;
-                    // Recursive trigger? 
-                    // For safety, just move there and let them trigger it next turn?
-                    // Or trigger immediately. 
-                    // If we trigger immediately, we need to return the result of that trigger.
-                    // But we are deep in state construction.
-                    // Let's just move them and say "Will trigger next turn" or effectively end turn on that spot?
-                    // If we end turn, next player goes.
-                    // If we want them to trigger it NOW, we need complex recursion.
-                    // Simplified: Move there. Give Extra Turn so they land on it? No, they are already on it.
-                    // Mechanics: Just move. Next time they "land" (which is now), they process?
-                    // They won't process it because 'handleLandOnNode' is done.
-                    // Let's just grant a small bonus instead to avoid complexity for now? 
-                    // Or just move them.
                     msg += ` -> 传送至另一命运点`;
                 }
                 break;
@@ -508,20 +415,17 @@ function handleLandOnNode(state, player, node) {
         }
 
         // 3. Buffs application from Event
-        // 3. Buffs application from Event
         if (event.effect && event.effect.buff) {
             const currentBuffs = p.buffs || [];
-            if (event.effect.buff === 'no_charger_5_turns') {
-                // Object buff
-                if (!currentBuffs.some(b => b.id === 'no_charger_5_turns')) {
-                    p.buffs = [...currentBuffs, { id: 'no_charger_5_turns', label: '电池老化', duration: 6 }];
-                }
-            } else {
-                // String buff (legacy/simple)
-                if (!currentBuffs.includes(event.effect.buff)) {
-                    p.buffs = [...currentBuffs, event.effect.buff];
-                }
-            }
+            const duration = event.effect.duration || 5;
+            const label = event.id === 'rainy_race' ? '雨天竞速' : 
+                         event.id === 'discount_card' ? '购店优惠' : '特殊状态';
+            
+            p.buffs = [...currentBuffs, { 
+                id: event.effect.buff, 
+                label: label, 
+                duration: duration 
+            }];
         }
 
         // Calculate changes for detailed logging
@@ -530,28 +434,23 @@ function handleLandOnNode(state, player, node) {
         let changeMsg = [];
         if (moneyDiff !== 0) changeMsg.push(`金钱 ${moneyDiff > 0 ? '+' : ''}${moneyDiff}`);
         if (powerDiff !== 0) changeMsg.push(`电量 ${powerDiff > 0 ? '+' : ''}${powerDiff}`);
+        if (p.shields > (player.shields || 0)) changeMsg.push(`护盾 +${p.shields - (player.shields || 0)}`);
 
-        if (changeMsg.length > 0) {
-            msg += ` [${changeMsg.join(', ')}]`;
-        }
+        if (changeMsg.length > 0) msg += ` [${changeMsg.join(', ')}]`;
         msg += ` (当前: ${p.money}金 / ${p.power}电)`;
 
-        // Log the detailed message
         newState = log(newState, msg);
-
-        // Save updated player state back to array, ensuring turnsSinceFate is reset
         newPlayers[player.id] = { ...p, turnsSinceFate: 0 };
-
         newState.players = newPlayers;
+        
         newState.modal = {
             type: 'FATE',
             text: event.text,
             event: event,
-            triggerNext: ['retrigger_fate', 'teleport_random', 'teleport_choice', 'swap_position'].includes(event.type)
+            triggerNext: ['retrigger_fate', 'swap_position', 'teleport_hospital'].includes(event.type)
         };
         newState.phase = 'EVENT_HANDLING';
 
-        // IMPORTANT: Ensure we don't return endTurn here, we wait for Modal resolve.
         return newState;
     }
 

@@ -9,6 +9,9 @@ const Modal = () => {
 
     if (!modal) return null;
 
+    const currentPlayer = state.players[state.currentPlayerIndex];
+    const isAI = currentPlayer.isAI;
+
     let title, content, actions, typeColor;
 
     if (modal.type === 'SHOP') {
@@ -52,15 +55,60 @@ const Modal = () => {
             </>
         );
     } else if (modal.type === 'FATE') {
+        const { event } = modal;
+        const categoryLabels = {
+            gain: { label: '增益', color: 'text-green-400', bg: 'bg-green-500/10', border: 'border-green-500/30' },
+            loss: { label: '损益', color: 'text-red-400', bg: 'bg-red-500/10', border: 'border-red-500/30' },
+            strategy: { label: '策略', color: 'text-purple-400', bg: 'bg-purple-500/10', border: 'border-purple-500/30' }
+        };
+        const cat = categoryLabels[event.category] || categoryLabels.strategy;
+
         title = "命运时间";
-        content = <div className="text-lg p-4 text-center text-purple-200">{modal.text}</div>;
-        typeColor = "border-purple-500";
+        content = (
+            <div className="flex flex-col items-center">
+                {/* Receipt Header */}
+                <div className="w-full bg-white text-slate-900 p-6 rounded-sm shadow-inner relative overflow-hidden font-mono text-sm mb-4 border-b-4 border-dashed border-slate-300">
+                    <div className="absolute top-0 left-0 w-full h-1 bg-slate-800 opacity-10"></div>
+                    <div className="flex justify-between mb-4 border-b border-slate-200 pb-2">
+                        <span>订单号: #{Math.floor(Math.random() * 900000) + 100000}</span>
+                        <span>{new Date().toLocaleTimeString()}</span>
+                    </div>
+                    
+                    <div className="text-center py-4 mb-4 border-b-2 border-slate-100">
+                        <div className={clsx("inline-block px-2 py-0.5 rounded text-[10px] font-bold mb-2 border", cat.border, cat.color, cat.bg)}>
+                            {cat.label}
+                        </div>
+                        <div className="text-lg font-bold leading-tight px-2 text-slate-800">
+                            {modal.text}
+                        </div>
+                    </div>
+
+                    <div className="space-y-1 text-[10px] text-slate-500">
+                        <div className="flex justify-between">
+                            <span>配送员:</span>
+                            <span>{currentPlayer.name}</span>
+                        </div>
+                        <div className="flex justify-between">
+                            <span>站点:</span>
+                            <span>命运中转站</span>
+                        </div>
+                    </div>
+                </div>
+                <div className="text-xs text-slate-500 italic">“无论结果如何，请继续前进。”</div>
+            </div>
+        );
+        typeColor = cat.border.replace('/30', ''); // Use a slightly more opaque version for the outer border
         actions = (
             <button
                 onClick={() => dispatch({ type: 'RESOLVE_MODAL' })}
-                className="w-full py-2 bg-purple-600 rounded text-white font-bold hover:bg-purple-700"
+                className={clsx(
+                    "w-full py-3 rounded-lg text-white font-bold transition-all shadow-lg",
+                    event.category === 'gain' ? "bg-green-600 hover:bg-green-500" :
+                    event.category === 'loss' ? "bg-red-600 hover:bg-red-500" :
+                    "bg-purple-600 hover:bg-purple-500"
+                )}
             >
-                确定
+                收到，继续出发
             </button>
         );
     }

@@ -2,7 +2,7 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
 import { useGame } from '../context/GameContext';
-import { Battery, Coins, Ticket, Dices } from 'lucide-react';
+import { Battery, Coins, Ticket, Dices, Bot, Shield } from 'lucide-react';
 import clsx from 'clsx';
 import { FACTIONS } from '../data/factions';
 
@@ -43,6 +43,7 @@ const PlayerCard = ({ player, isActive }) => {
             <div className="flex gap-3 text-xs">
                 <div className="flex items-center gap-1 text-yellow-400"><Coins size={12} /> {player.money}</div>
                 <div className="flex items-center gap-1 text-green-400"><Battery size={12} /> {player.power}</div>
+                <div className="flex items-center gap-1 text-cyan-400"><Shield size={12} /> {player.shields || 0}</div>
                 <div className="flex items-center gap-1 text-pink-400">
                     <Ticket size={12} /> {player.coupons.length}/10
                 </div>
@@ -74,7 +75,7 @@ const PlayerCard = ({ player, isActive }) => {
                         </div>
 
                         {/* Resources */}
-                        <div className="grid grid-cols-2 gap-2 mb-3">
+                        <div className="grid grid-cols-3 gap-2 mb-3">
                             <div className="bg-black/30 p-2 rounded flex flex-col items-center">
                                 <span className="text-[10px] text-slate-400">资金</span>
                                 <span className="text-yellow-400 font-mono font-bold">{player.money}</span>
@@ -82,6 +83,10 @@ const PlayerCard = ({ player, isActive }) => {
                             <div className="bg-black/30 p-2 rounded flex flex-col items-center">
                                 <span className="text-[10px] text-slate-400">电量</span>
                                 <span className="text-green-400 font-mono font-bold">{player.power}</span>
+                            </div>
+                            <div className="bg-black/30 p-2 rounded flex flex-col items-center">
+                                <span className="text-[10px] text-slate-400">护盾</span>
+                                <span className="text-cyan-400 font-mono font-bold">{player.shields || 0}</span>
                             </div>
                         </div>
 
