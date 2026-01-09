@@ -1,7 +1,7 @@
 
 import React from 'react';
 import { useGame } from '../context/GameContext';
-import { ShoppingBag, Zap, Banknote, Plus, HelpCircle, User } from 'lucide-react';
+import { ShoppingBag, Zap, Banknote, Plus, HelpCircle, User, Users } from 'lucide-react';
 import clsx from 'clsx';
 
 const ICON_MAP = {
@@ -10,6 +10,7 @@ const ICON_MAP = {
     money: Banknote,
     hospital: Plus,
     fate: HelpCircle,
+    social: Users,
     normal: null
 };
 
@@ -19,6 +20,7 @@ const COLOR_MAP = {
     money: '#3b82f6',
     hospital: '#ef4444',
     fate: '#a855f7',
+    social: '#f97316',
     normal: '#64748b'
 };
 

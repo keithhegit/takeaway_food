@@ -3,7 +3,7 @@ import React, { createContext, useReducer, useContext, useEffect, useRef } from 
 import { generateMap } from '../engine/MapGenerator';
 import { FACTIONS } from '../data/factions';
 import { FATE_EVENTS } from '../data/fateEvents';
-import { findBestMove, shouldBuyShop, getNextStepToward } from '../utils/aiLogic';
+import { findBestMove, shouldBuyShop, getNextStepToward, getAISocialAction } from '../utils/aiLogic';
 import { getWeightedRandom } from '../utils/gameUtils';
 
 const GameContext = createContext();
@@ -194,6 +194,60 @@ function gameReducer(state, action) {
         }
 
         case 'SKIP_BUY': {
+            return endTurn({ ...state, modal: null });
+        }
+
+        case 'PERFORM_SHUTDOWN': {
+            const { targetId, shopIndex } = action.payload;
+            const pIndex = state.currentPlayerIndex;
+            const p = state.players[pIndex];
+            const target = state.players[targetId];
+            const shop = target.coupons[shopIndex];
+
+            const newPlayers = [...state.players];
+            let msg = "";
+
+            if (target.shields > 0) {
+                // Shielded
+                newPlayers[targetId] = { ...target, shields: target.shields - 1 };
+                newPlayers[pIndex] = { ...p, money: p.money + 2 };
+                msg = `${p.name} 试图破坏 ${target.name} 的 ${shop.name}，但被护盾挡住了！(获得 2 元安慰金)`;
+            } else {
+                // Success
+                const newCoupons = [...target.coupons];
+                newCoupons.splice(shopIndex, 1);
+                newPlayers[targetId] = { ...target, coupons: newCoupons };
+                newPlayers[pIndex] = { ...p, money: p.money + 5 };
+                msg = `${p.name} 成功破坏了 ${target.name} 的 ${shop.name}！(获得 5 元报酬)`;
+            }
+
+            return endTurn(log({ ...state, players: newPlayers, modal: null }, msg));
+        }
+
+        case 'PERFORM_HEIST': {
+            const { amount } = action.payload;
+            const pIndex = state.currentPlayerIndex;
+            const p = state.players[pIndex];
+            
+            const enemies = state.players.filter(pl => pl.id !== pIndex && pl.money > 0);
+            const newPlayers = [...state.players];
+            let msg = "";
+
+            if (enemies.length > 0 && amount > 0) {
+                const target = enemies[Math.floor(Math.random() * enemies.length)];
+                const actualSteal = Math.min(target.money, amount);
+                
+                newPlayers[target.id] = { ...target, money: target.money - actualSteal };
+                newPlayers[pIndex] = { ...p, money: p.money + actualSteal };
+                msg = `${p.name} 在社交中心大显身手，从 ${target.name} 处窃取了 ${actualSteal} 元！`;
+            } else {
+                msg = `${p.name} 在社交中心空手而归。`;
+            }
+
+            return endTurn(log({ ...state, players: newPlayers, modal: null }, msg));
+        }
+
+        case 'CANCEL_SOCIAL': {
             return endTurn({ ...state, modal: null });
         }
 
@@ -454,6 +508,19 @@ function handleLandOnNode(state, player, node) {
         return newState;
     }
 
+    // 6. Social
+    if (node.type === 'social') {
+        const type = Math.random() < 0.5 ? 'SHUTDOWN' : 'HEIST';
+        return {
+            ...state,
+            phase: 'EVENT_HANDLING',
+            modal: {
+                type: type,
+                player: player
+            }
+        };
+    }
+
     // Normal
     return endTurn(state);
 }
@@ -695,6 +762,13 @@ export const GameProvider = ({ children }) => {
                         dispatch({ type: 'BUY_SHOP', payload: { shop: state.modal.shop } });
                     } else {
                         dispatch({ type: 'SKIP_BUY' });
+                    }
+                } else if (state.modal.type === 'SHUTDOWN' || state.modal.type === 'HEIST') {
+                    const aiAction = getAISocialAction(state.modal, state);
+                    if (aiAction) {
+                        dispatch(aiAction);
+                    } else {
+                        dispatch({ type: 'CANCEL_SOCIAL' });
                     }
                 } else {
                     // Fate or others -> Resolve

@@ -17,6 +17,7 @@ const WEIGHTS = {
     MONEY_HIGH_FUNDS: 2,
     FATE_BEHIND: 10, // Risky when losing
     FATE_AHEAD: -5,  // Safe when winning
+    SOCIAL: 12,      // Good for interaction
     HOSPITAL: -50,   // Avoid!
 };
 
@@ -59,6 +60,29 @@ export function findBestMove(currentNodeId, steps, player, mapNodes, players) {
     });
 
     return bestNodeId;
+}
+
+/**
+ * Get AI social action decision.
+ */
+export function getAISocialAction(modal, state) {
+    if (modal.type === 'SHUTDOWN') {
+        const enemiesWithShops = state.players.filter(p => p.id !== state.currentPlayerIndex && p.coupons.length > 0);
+        if (enemiesWithShops.length === 0) return { type: 'CANCEL_SOCIAL' };
+        
+        // Target player with most shops
+        const target = [...enemiesWithShops].sort((a, b) => b.coupons.length - a.coupons.length)[0];
+        // Destroy their first shop
+        return { type: 'PERFORM_SHUTDOWN', payload: { targetId: target.id, shopIndex: 0 } };
+    }
+    
+    if (modal.type === 'HEIST') {
+        // AI just "plays" and gets a weighted result (average success rate)
+        const amount = [0, 2, 2, 4, 4, 6][Math.floor(Math.random() * 6)];
+        return { type: 'PERFORM_HEIST', payload: { amount } };
+    }
+    
+    return null;
 }
 
 /**
@@ -112,7 +136,7 @@ function evaluateNode(nodeId, player, mapNodes, players) {
         case 'shop':
             if (node.shop) {
                 // Check ownership
-                const owner = players.find(p => p.shops && p.shops.includes(node.shop.id));
+                const owner = players.find(p => p.coupons && p.coupons.some(c => c.name === node.shop.name));
                 if (owner) {
                     if (owner.id === player.id) {
                         score += WEIGHTS.OWNED_SHOP; // Own shop: small bonus or penalty
@@ -124,7 +148,7 @@ function evaluateNode(nodeId, player, mapNodes, players) {
                     if (player.money >= node.shop.price) {
                         score += WEIGHTS.BUYABLE_SHOP;
                         // Bonus if it helps win (count total shops)
-                        if (player.shops.length >= 8) score += 20; // Close to win
+                        if (player.coupons.length >= 8) score += 20; // Close to win
                     } else {
                         score -= 5; // Can't buy, waste of turn?
                     }
@@ -144,7 +168,7 @@ function evaluateNode(nodeId, player, mapNodes, players) {
 
         case 'hospital':
             // Check immunity
-            if (player.factionId === 'dingdong') score += 0; // Immune
+            if (player.stats.faction.passives.hospitalImmunity) score += 0; // Immune
             else score += WEIGHTS.HOSPITAL;
             break;
 
@@ -153,6 +177,13 @@ function evaluateNode(nodeId, player, mapNodes, players) {
             const isWinning = player.coupons.length === Math.max(...players.map(p => p.coupons.length));
             if (isWinning) score += WEIGHTS.FATE_AHEAD;
             else score += WEIGHTS.FATE_BEHIND;
+            break;
+
+        case 'social':
+            score += WEIGHTS.SOCIAL;
+            // Extra points if others have many shops (Shutdown target)
+            const maxEnemyShops = Math.max(...players.filter(p => p.id !== player.id).map(p => p.coupons.length));
+            if (maxEnemyShops > 0) score += 5;
             break;
 
         case 'normal':

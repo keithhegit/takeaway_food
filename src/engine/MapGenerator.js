@@ -9,7 +9,8 @@ const TILE_COUNTS = {
     charger: 4,
     money: 4,
     hospital: 2,
-    normal: 12
+    social: 4,
+    normal: 8
 };
 
 export function generateMap() {
@@ -22,6 +23,7 @@ export function generateMap() {
     types.push(...Array(TILE_COUNTS.charger).fill('charger'));
     types.push(...Array(TILE_COUNTS.money).fill('money'));
     types.push(...Array(TILE_COUNTS.hospital).fill('hospital'));
+    types.push(...Array(TILE_COUNTS.social).fill('social'));
     types.push(...Array(TILE_COUNTS.normal).fill('normal'));
 
     types = shuffle(types);
