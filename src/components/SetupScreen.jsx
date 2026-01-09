@@ -26,17 +26,20 @@ const SetupScreen = () => {
         setStep(3);
         setPlayerConfigs([]);
         setCurrentSelector(0);
+        setIsCurrentPlayerAI(false);
     };
 
     const handleFactionSelect = (factionId) => {
         const newConfigs = [...playerConfigs, {
             name: `P${currentSelector + 1}`,
-            factionId
+            factionId,
+            isAI: isCurrentPlayerAI
         }];
         setPlayerConfigs(newConfigs);
 
         if (currentSelector + 1 < playerCount) {
             setCurrentSelector(currentSelector + 1);
+            setIsCurrentPlayerAI(false);
         } else {
             // Finished
             dispatch({ type: 'INIT_GAME', payload: { playerConfigs: newConfigs, victoryTarget } });
