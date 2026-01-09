@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 import { useGame } from '../context/GameContext';
 import { FACTIONS } from '../data/factions';
 import clsx from 'clsx';
-import { CheckCircle, User } from 'lucide-react';
+import { CheckCircle, User, HelpCircle } from 'lucide-react';
 
 const SetupScreen = () => {
     const { dispatch } = useGame();
@@ -108,52 +108,52 @@ const SetupScreen = () => {
                             <div className="text-slate-400">剩余可选势力: {availableFactions.length}</div>
                         </div>
 
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 relative">
+                        <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6 relative">
                             {/* Detailed Info Portal */}
                             {hoveredFaction && hoverRect && createPortal(
                                 <div
-                                    className="fixed z-[9999] w-[400px] max-w-[90vw] p-6 bg-slate-950/95 border-2 border-cyan-400/50 rounded-2xl shadow-[0_0_50px_rgba(34,211,238,0.3)] backdrop-blur-md animate-in fade-in zoom-in-95 duration-200 pointer-events-none flex flex-col gap-4"
+                                    className="fixed z-[9999] w-[300px] sm:w-[400px] max-w-[90vw] p-4 sm:p-6 bg-slate-950/95 border-2 border-cyan-400/50 rounded-2xl shadow-[0_0_50px_rgba(34,211,238,0.3)] backdrop-blur-md animate-in fade-in zoom-in-95 duration-200 pointer-events-none flex flex-col gap-3 sm:gap-4"
                                     style={{
-                                        top: hoverRect.top + hoverRect.height / 2,
-                                        transform: 'translateY(-50%)',
-                                        left: hoverRect.left < window.innerWidth / 2 ? hoverRect.right + 24 : undefined,
-                                        right: hoverRect.left >= window.innerWidth / 2 ? window.innerWidth - hoverRect.left + 24 : undefined
+                                        top: window.innerWidth < 768 ? '50%' : hoverRect.top + hoverRect.height / 2,
+                                        left: window.innerWidth < 768 ? '50%' : (hoverRect.left < window.innerWidth / 2 ? hoverRect.right + 24 : undefined),
+                                        right: window.innerWidth < 768 ? undefined : (hoverRect.left >= window.innerWidth / 2 ? window.innerWidth - hoverRect.left + 24 : undefined),
+                                        transform: window.innerWidth < 768 ? 'translate(-50%, -50%)' : 'translateY(-50%)'
                                     }}
                                 >
                                     {/* Header */}
-                                    <div className="flex items-center gap-4 border-b border-white/10 pb-4">
-                                        <div className="w-16 h-16 rounded-full flex items-center justify-center font-bold text-3xl text-white shadow-neon"
+                                    <div className="flex items-center gap-3 sm:gap-4 border-b border-white/10 pb-3 sm:pb-4">
+                                        <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-full flex items-center justify-center font-bold text-2xl sm:text-3xl text-white shadow-neon shrink-0"
                                             style={{ backgroundColor: hoveredFaction.color, boxShadow: `0 0 20px ${hoveredFaction.color}` }}>
                                             {hoveredFaction.name[0]}
                                         </div>
                                         <div>
-                                            <h4 className="text-2xl font-bold text-white tracking-wide" style={{ color: hoveredFaction.color }}>
+                                            <h4 className="text-xl sm:text-2xl font-bold text-white tracking-wide" style={{ color: hoveredFaction.color }}>
                                                 {hoveredFaction.name}
                                             </h4>
-                                            <p className="text-slate-400 text-sm">{hoveredFaction.desc}</p>
+                                            <p className="text-slate-400 text-xs sm:text-sm">{hoveredFaction.desc}</p>
                                         </div>
                                     </div>
 
                                     {/* Resources */}
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <div className="bg-slate-900/50 p-3 rounded-lg border border-white/5 flex items-center justify-between">
-                                            <span className="text-slate-400 text-sm">初始电量</span>
-                                            <span className="text-green-400 font-bold font-mono text-xl">⚡ {hoveredFaction.initialPower}</span>
+                                    <div className="grid grid-cols-2 gap-3 sm:gap-4">
+                                        <div className="bg-slate-900/50 p-2 sm:p-3 rounded-lg border border-white/5 flex items-center justify-between">
+                                            <span className="text-slate-400 text-xs sm:text-sm">初始电量</span>
+                                            <span className="text-green-400 font-bold font-mono text-lg sm:text-xl">⚡ {hoveredFaction.initialPower}</span>
                                         </div>
-                                        <div className="bg-slate-900/50 p-3 rounded-lg border border-white/5 flex items-center justify-between">
-                                            <span className="text-slate-400 text-sm">初始资金</span>
-                                            <span className="text-yellow-400 font-bold font-mono text-xl">💰 {hoveredFaction.initialMoney}</span>
+                                        <div className="bg-slate-900/50 p-2 sm:p-3 rounded-lg border border-white/5 flex items-center justify-between">
+                                            <span className="text-slate-400 text-xs sm:text-sm">初始资金</span>
+                                            <span className="text-yellow-400 font-bold font-mono text-lg sm:text-xl">💰 {hoveredFaction.initialMoney}</span>
                                         </div>
                                     </div>
 
                                     {/* Skills */}
-                                    <div className="bg-slate-900/50 p-4 rounded-xl border border-white/5">
-                                        <h5 className="text-cyan-400 font-bold mb-3 flex items-center gap-2 text-sm uppercase tracking-wider">
+                                    <div className="bg-slate-900/50 p-3 sm:p-4 rounded-xl border border-white/5 max-h-[40vh] overflow-y-auto">
+                                        <h5 className="text-cyan-400 font-bold mb-2 sm:mb-3 flex items-center gap-2 text-xs sm:text-sm uppercase tracking-wider">
                                             <span>❖</span> 核心技能
                                         </h5>
-                                        <ul className="space-y-2.5">
+                                        <ul className="space-y-2">
                                             {hoveredFaction.skillsList && hoveredFaction.skillsList.map((skill, idx) => (
-                                                <li key={idx} className="flex items-start gap-3 text-sm text-slate-200 leading-relaxed">
+                                                <li key={idx} className="flex items-start gap-2 sm:gap-3 text-xs sm:text-sm text-slate-200 leading-relaxed">
                                                     <span className="text-cyan-500 mt-1 min-w-[4px] h-4 rounded-full bg-cyan-500/50 block"></span>
                                                     <span>{skill}</span>
                                                 </li>
@@ -173,39 +173,61 @@ const SetupScreen = () => {
                                         disabled={isTaken}
                                         onClick={() => handleFactionSelect(faction.id)}
                                         onMouseEnter={(e) => {
-                                            setHoverRect(e.currentTarget.getBoundingClientRect());
-                                            setHoveredFaction(faction);
+                                            if (window.innerWidth >= 768) {
+                                                setHoverRect(e.currentTarget.getBoundingClientRect());
+                                                setHoveredFaction(faction);
+                                            }
                                         }}
                                         onMouseLeave={() => {
-                                            setHoveredFaction(null);
-                                            setHoverRect(null);
+                                            if (window.innerWidth >= 768) {
+                                                setHoveredFaction(null);
+                                                setHoverRect(null);
+                                            }
                                         }}
+                                        // Mobile: Click to show details if not selected? No, simple click to select. 
+                                        // Maybe long press? For now keep simple.
                                         className={clsx(
-                                            "relative p-6 rounded-xl border-2 text-left transition-all duration-300 group",
+                                            "relative p-3 sm:p-6 rounded-xl border-2 text-left transition-all duration-300 group flex flex-col h-full",
                                             isTaken
                                                 ? "border-slate-700 bg-slate-800/50 opacity-50 cursor-not-allowed grayscale"
-                                                : "border-slate-600 bg-slate-800 hover:scale-105 hover:shadow-xl"
+                                                : "border-slate-600 bg-slate-800 hover:scale-[1.02] hover:shadow-xl active:scale-95"
                                         )}
                                         style={{
                                             borderColor: !isTaken ? faction.color : undefined,
                                             boxShadow: !isTaken ? `0 0 0 1px ${faction.color}30` : 'none'
                                         }}
                                     >
-                                        <div className="flex justify-between items-start mb-4">
-                                            <div className="w-12 h-12 rounded-full flex items-center justify-center font-bold text-xl text-white shadow-lg"
+                                        <div className="flex items-center gap-3 mb-2 sm:mb-4">
+                                            <div className="w-8 h-8 sm:w-12 sm:h-12 rounded-full flex items-center justify-center font-bold text-sm sm:text-xl text-white shadow-lg shrink-0"
                                                 style={{ backgroundColor: faction.color }}>
                                                 {faction.name[0]}
                                             </div>
-                                            {isTaken && <span className="text-red-500 font-bold text-xs uppercase tracking-widest border border-red-500/50 px-2 py-1 rounded">已选</span>}
+                                            <div className="min-w-0 flex-1">
+                                                <h3 className="text-sm sm:text-xl font-bold text-white truncate group-hover:text-cyan-300 transition-colors">
+                                                    {faction.name}
+                                                </h3>
+                                                {isTaken && <span className="text-red-500 font-bold text-[10px] uppercase tracking-widest border border-red-500/50 px-1 rounded block w-fit mt-1">已选</span>}
+                                            </div>
                                         </div>
 
-                                        <h3 className="text-xl font-bold text-white mb-2 group-hover:text-cyan-300 transition-colors">{faction.name}</h3>
-                                        <div className="space-y-1">
-                                            <p className="text-xs text-slate-300 bg-black/30 p-2 rounded">{faction.desc}</p>
-                                            <div className="flex gap-2 text-[10px] text-slate-400 mt-2">
-                                                <span>⚡ {faction.initialPower}</span>
-                                                <span>💰 {faction.initialMoney}</span>
+                                        <div className="space-y-1 sm:space-y-2 mt-auto">
+                                            <p className="text-[10px] sm:text-xs text-slate-300 bg-black/30 p-1.5 sm:p-2 rounded line-clamp-1 sm:line-clamp-2">
+                                                {faction.desc}
+                                            </p>
+                                            <div className="flex gap-2 text-[10px] text-slate-400">
+                                                <span className="flex items-center gap-1">⚡ {faction.initialPower}</span>
+                                                <span className="flex items-center gap-1">💰 {faction.initialMoney}</span>
                                             </div>
+                                        </div>
+                                        
+                                        {/* Mobile Info Button Hint */}
+                                        <div className="md:hidden absolute top-2 right-2 text-white/20" 
+                                             onClick={(e) => {
+                                                 e.stopPropagation();
+                                                 setHoverRect(e.currentTarget.parentElement.getBoundingClientRect());
+                                                 setHoveredFaction(faction);
+                                             }}>
+                                            <HelpCircle size={14} />
                                         </div>
                                     </button>
                                 );

@@ -56,8 +56,9 @@ const GameBoard = () => {
                                 key={`${node.id}-${targetId}`}
                                 x1={`${node.x}%`} y1={`${node.y}%`}
                                 x2={`${target.x}%`} y2={`${target.y}%`}
-                                stroke="rgba(255,255,255,0.2)"
-                                strokeWidth="4"
+                                stroke="rgba(255,255,255,0.1)"
+                                strokeWidth="1.5"
+                                className="transition-all duration-500"
                             />
                         );
                     })
@@ -71,9 +72,9 @@ const GameBoard = () => {
                             key={`highlight-${currentNode.id}-${targetId}`}
                             x1={`${currentNode.x}%`} y1={`${currentNode.y}%`}
                             x2={`${target.x}%`} y2={`${target.y}%`}
-                            stroke={isSelectable ? "#22c55e" : "rgba(34, 211, 238, 0.4)"} // Green if moving, Cyan if just looking
-                            strokeWidth={isSelectable ? "8" : "4"}
-                            strokeDasharray={isSelectable ? "10" : "5"}
+                            stroke={isSelectable ? "#4ade80" : "rgba(34, 211, 238, 0.3)"} // Green if moving, Cyan if just looking
+                            strokeWidth={isSelectable ? "3" : "1.5"}
+                            strokeDasharray={isSelectable ? "6" : "3"}
                             className={isSelectable ? "animate-pulse" : ""}
                         />
                     );
@@ -84,40 +85,44 @@ const GameBoard = () => {
             {mapNodes.map(node => {
                 const Icon = ICON_MAP[node.type];
                 const isValidMove = validNeighbors.includes(node.id);
+                // Determine if this is a special node that needs distinct coloring
+                const nodeColor = isValidMove ? '#ffffff' : COLOR_MAP[node.type];
+                const ringColor = isValidMove ? '#22c55e' : COLOR_MAP[node.type];
 
                 return (
                     <div
                         key={node.id}
                         onClick={() => handleNodeClick(node.id)}
                         className={clsx(
-                            "absolute transform -translate-x-1/2 -translate-y-1/2 w-10 h-10 sm:w-12 sm:h-12 md:w-14 md:h-14 rounded-full flex items-center justify-center border-4 transition-all duration-300",
-                            isValidMove ? "scale-125 border-green-400 shadow-[0_0_20px_#22c55e] cursor-pointer z-20" : "bg-slate-800 z-10",
+                            "absolute transform -translate-x-1/2 -translate-y-1/2 flex items-center justify-center transition-all duration-300 rounded-full",
+                            // Mobile size optimized: w-9 h-9 (36px)
+                            "w-9 h-9 sm:w-12 sm:h-12",
+                            // Modern Style: Glassmorphism + Glow
+                            isValidMove 
+                                ? "bg-green-500 shadow-[0_0_20px_rgba(34,197,94,0.6)] scale-110 z-20 ring-2 ring-white" 
+                                : "bg-slate-900/80 backdrop-blur-sm border border-white/10 z-10 shadow-lg hover:scale-110 hover:z-30 hover:bg-slate-800",
                             !isValidMove && "opacity-90"
                         )}
                         style={{
                             left: `${node.x}%`,
                             top: `${node.y}%`,
-                            borderColor: isValidMove ? '#4ade80' : COLOR_MAP[node.type],
-                            backgroundColor: isValidMove ? '#064e3b' : undefined
+                            borderColor: ringColor, // For border style if needed, but we use ring/bg mostly
+                            // box-shadow for type glow
+                            boxShadow: isValidMove ? undefined : `0 0 10px ${COLOR_MAP[node.type]}20`
                         }}
-                        title={`Node ${node.id}: ${node.type}`}
                     >
-                        {Icon && <Icon size={14} className="sm:hidden" color={isValidMove ? 'white' : COLOR_MAP[node.type]} />}
-                        {Icon && <Icon size={16} className="hidden sm:block" color={isValidMove ? 'white' : COLOR_MAP[node.type]} />}
+                        {Icon && <Icon size={16} className="sm:hidden" color={nodeColor} strokeWidth={2.5} />}
+                        {Icon && <Icon size={20} className="hidden sm:block" color={nodeColor} strokeWidth={2.5} />}
 
-                        {/* Node Type Labels */}
-                        {['hospital', 'money', 'charger', 'fate'].includes(node.type) && (
-                            <div
-                                className="absolute -top-6 whitespace-nowrap text-[10px] sm:text-[12px] bg-black/80 px-2 py-0.5 rounded font-bold z-30 border border-white/10 shadow-sm"
-                                style={{ color: COLOR_MAP[node.type] }}
-                            >
-                                {node.type === 'hospital' ? '医院' : node.type === 'money' ? '打工点' : node.type === 'charger' ? '充电桩' : '命运'}
-                            </div>
-                        )}
-
-                        {/* Shop Price Tag */}
+                        {/* Node Type Labels - REMOVED for clarity on mobile, only show Shop Names */}
+                        
+                        {/* Shop Name Tag - Simplified */}
                         {node.shop && (
-                            <div className="absolute -top-6 whitespace-nowrap text-[10px] sm:text-[12px] bg-black/90 px-2 py-0.5 rounded text-orange-400 border border-orange-500/50 font-bold z-30">
+                            <div className={clsx(
+                                "absolute -top-5 whitespace-nowrap px-1.5 py-0.5 rounded text-orange-300 font-bold z-30 pointer-events-none transition-all",
+                                "text-[9px] sm:text-[11px] bg-black/60 backdrop-blur-md border border-orange-500/20",
+                                isValidMove ? "scale-110 -top-6 bg-black/80" : ""
+                            )}>
                                 {node.shop.name}
                             </div>
                         )}
